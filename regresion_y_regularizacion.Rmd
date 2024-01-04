@@ -1,0 +1,312 @@
+---
+title: "Regresión No Paramétrica y Métodos de Regularización en Modelo Lineal"
+author: " "
+date: "2023-12-11"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+En el archivo body.xls se encuentran datos de morfología corporal humana. El objetivo principal es estudiar la relación entre el peso y distintas variables morfológicas basándose en 507 individuos: 247 hombres y 260 mujeres. Las variables medidas son:
+
+_Medidas esqueléticas:_ \
+**BIAC:** Diámetro biacromial\
+**BIIL:** Ancho pélvico\
+**BITRO:** Diámetro bitrocantérico\
+**CHEST1:** Profundidad del tórax entre la columna y el esternón, a mitad de la espiración\
+**CHEST2:** Diámetro del tórax, a mitad de la espiración\
+**ELBOW:** Diámetro del codo, suma de dos codos\
+**WRIST:** Diámetro de muñeca, suma de dos muñecas\
+**KNEE:** Diámetro de rodilla, suma de dos rodillas\
+**ANKLE:** Diámetro del tobillo, suma de dos tobillos\
+*Medidas de circunferencia:*\
+**SHOUL:** Circunferencia de hombros sobre los músculos deltoides\
+**CHESTG:** Circunferencia del pecho a mitad de la espiración\
+**WAISTG:** Circunferencia de la cintura, promedio de la posición contraída y relajada\
+**NAVEL:** Circunferencia abdominal\
+**HIP:** Circunferencia de la cadera al nivel del diámetro bitrocantéreo\
+**GLUTE:** Circunferencia del muslo por debajo del pliegue del glúteo, promedio de las
+circunferencias derecha e izquierda\
+**BICEP:** Circunferencia del bíceps, flexionado, promedio de las circunferencias derecha
+e izquierda\
+**FOREA:** Circunferencia del antebrazo, extendido, palma hacia arriba, promedio de
+circunferencias derecha e izquierda\
+**KNEEG:** Circunferencia de rodilla sobre rótula, posición ligeramente flexionada, promedio de circunferencias derecha e izquierda\
+**CALF:** Circunferencia máxima de pantorrilla, promedio de circunferencias derecha e izquierda\
+**ANKLEG:** Perímetro mínimo del tobillo, promedio de los perímetros derecho e izquierdo\
+**WRISTG:** Circunferencia mínima de muñeca, promedio de circunferencias derecha e izquierda\
+
+###Lectura de Datos
+(a)
+```{r}
+library(readxl)
+body<-read_excel("body.xls",col_names=FALSE)
+colnames(body)<- (c("BIAC","BIIL","BITRO","CHEST1","CHEST2","ELBOW","WRIST",
+                    "KNEE","ANKLE","SHOUL","CHESTG","WAISTG","NAVEL","HIP","GLUTE","BICEP",
+                    "FLOREA","KNEEG","CALF","ANKLEG","WRISTG","AGE","WEIG","HEIG","GEN"))
+dataM<-subset(body,GEN==0)
+dataH<-subset(body,GEN>0)
+```
+
+### Etapa Exploratoria
+
+Supongamos que en primera instancia los investigadores están interesados en algunas características distribucionales de las variables medidas. A modo de ejemplo consideramos la mediana de la variable WEIG en cada uno de los dos géneros. A partir de los datos, se estimó la mediana del peso de cada género y se calculó por métodos bootstrap distintos un intervalo de nivel aproximado 0.95 para cada una de ellas.
+
+```{r}
+WEIG<-body$WEIG
+WEIGM<-dataM$WEIG
+WEIGH<-dataH$WEIG
+medianaM<-median(WEIGM)
+medianaH<-median(WEIGH)
+set.seed(123)
+#Primero se hallaron las muestras bootstrapeadas mediante un Bootstrap No Parametrico 
+
+bootnpM<-replicate(1000,{
+  muestrabootsM<-sample(WEIGM,replace=TRUE)
+  median(muestrabootsM)
+})
+
+bootnpH<-replicate(1000,{
+  muestrabootsH<-sample(WEIGH,replace=TRUE)
+  median(muestrabootsH)
+})
+
+seM<-sd(bootnpM)
+seH<-sd(bootnpH)
+
+nivel<-0.95
+alpha<-1-nivel
+
+#intervalo bootstrap normal
+
+ICBNmujeres<-c(medianaM+(qnorm(alpha/2)*seM) , medianaM+(qnorm(1-alpha/2)*seM))
+ICBNmujeres
+ICBNhombres<-c(medianaH+(qnorm(alpha/2)*seH) , medianaH+(qnorm(1-alpha/2)*seH))
+ICBNhombres
+#intervalo bootstrap percentil
+
+ICBPmujeres<-c(quantile(bootnpM,alpha/2),quantile(bootnpM,1-alpha/2))
+ICBPmujeres
+ICBPhombres<-c(quantile(bootnpH,alpha/2),quantile(bootnpH,1-alpha/2))
+ICBPhombres
+```
+Mediante un Bootstrap No paramétrico se obtuvo una muestra (para cada género) bootstrapeada a partir de la original tomando con reposicion los elementos. Luego se hallaron los cuatro intervalos de confianza con el nivel solicitado, utilizando los metodos bootstrap Normal y Percentil. Dado que la mediana de WEIGM es 59, obtuvimos resultados razonables, ya que se consiguieron intervalos que contienen a dicha mediana, de longitud similar y con extremos cercanos a la mediana.Analogamente con WEIGH, cuya media es 77.3. La mediana de los hombres es considerablemente mayor que la de las mujeres.
+
+---
+
+Se cree que las variables WEIG y HEIG presentan una asociación que puede variar de acuerdo al género. Se observaa continuación un diagrama de dispersión de HEIG vs WEIG discriminado por GEN.
+
+```{r}
+HEIG<-body$HEIG
+GEN<-body$GEN
+colores<-ifelse(GEN==1,"blue","magenta")
+plot(HEIG,WEIG,main="Altura vs Peso Segun Genero",xlab="Altura",ylab="Peso",col=colores)
+
+```
+Por un lado el gráfico sugiere que hay una relacion positiva entre peso y altura (a mayor altura hay una tendencia a mayor peso).
+Por otro lado, se aprecia una clara diferencia entre los valores de hombres y mujeres, los hombres tienden a ser mas pesados y mas altos que las mujeres.
+
+---
+
+Se utiliza el comando ksmooth para explorar la relación entre las variables WEIG y HEIG en cada género, efectuando una regresión no paramétrica usando el núcleo normal y utilizando el argumento bandwidth=10.
+
+```{r}
+library(ks)
+h<-10
+hombres<-GEN>0
+plot(HEIG[hombres],WEIG[hombres],main="Altura vs Peso Hombres",xlab="Altura",ylab="Peso",col="blue")
+lines(ksmooth(HEIG[hombres],WEIG[hombres],kernel="normal",bandwidth=h))
+
+mujeres<-GEN==0
+plot(HEIG[mujeres],WEIG[mujeres],main="Altura vs Peso Mujeres",xlab="Altura",ylab="Peso",col="magenta")
+lines(ksmooth(HEIG[mujeres],WEIG[mujeres],kernel="normal",bandwidth=h))
+```
+Como se mencionó en el item anterior, se confirma la correlacion positiva tanto para hombres como para mujeres.
+Con esta ventana (h=10), se podría sospechar de una relació lineal entre ambas variables (más en mujeres que en los hombres), dado que, en ambos casos, el modelo ajusta a una funcion similar a una recta. Para esta h se observa un gran sesgo del modelo y muy poca varianza.
+
+---
+
+Se implementó un código que realiza la búsqueda de una ventana óptima para ksmooth con núcleo normal para el parámetro bandwidth. Se utiliza un criterio de convalidación cruzada basado en leave-one-out y se realizó la búsqueda en una grilla de bandwidth entre 5 y 20 con paso 0.5 
+
+```{r}
+grillaH<-seq(5,20,0.5)
+optimizarh<-function(x,y,grillaH){
+  errorporh<-numeric(length(grillaH))
+  errores<-matrix(nrow=length(grillaH), ncol=length(x))
+  for (i in 1:length(grillaH)){
+    for(j in 1:length(x)){
+      xsinj <- x[-j]
+      ysinj <- y[-j]
+      regresion<-ksmooth(xsinj,ysinj,"normal",bandwidth = grillaH[i],x.points=x[j]) 
+      errores[i,j]<-(y[j]-regresion$y)**2        
+    }
+    errorporh[i]<-mean(errores[i,])
+  }
+hoptimo<-grillaH[which.min(errorporh)]
+return(list("hoptimo"=hoptimo,"errorporh"=errorporh))
+}    
+
+regH<-optimizarh(HEIG[hombres],WEIG[hombres],grillaH)
+hoptH<-regH$hoptimo
+hoptH
+regM<-optimizarh(HEIG[mujeres],WEIG[mujeres],grillaH)
+hoptM<-regM$hoptimo
+hoptM
+
+plot(grillaH,regH$errorporh, main="Errores en función de h (hombres)", xlab="h",
+     ylab="Errores", col="blue")
+abline(v=hoptH, col="red")
+legend("bottomright",legend="h óptimo",pch=20, col="red")
+
+plot(grillaH,regM$errorporh, main="Errores en función de h (mujeres)", xlab="h",
+     ylab="Errores", col="magenta")
+abline(v=hoptM, col="red")
+legend("bottomright",legend="h óptimo",pch=20, col="red")
+```
+
+---
+
+Para cada género se realizó el diagrama de dispersión de HEIG vs. WEIG usando todos los datos y se superpuso la estimación de la regresión no paramétrica que se obtiene con la ventana óptima hallada. Asimismo, se superpuso la recta que se obtiene utilizando el método de mínimos cuadrados.
+
+
+```{r}
+#(f)
+ModeloLinealH<-lm(WEIG[hombres] ~ HEIG[hombres])
+ModeloLinealM<-lm(WEIG[mujeres] ~ HEIG[mujeres])
+
+plot(HEIG[hombres],WEIG[hombres],main="Altura vs Peso Hombres",xlab="Altura",ylab="Peso",col="blue")
+lines(ksmooth(HEIG[hombres],WEIG[hombres],kernel="normal",bandwidth=hoptH))
+abline(ModeloLinealH,col="red")
+legend("topleft",legend=c("Regresion Lineal","Regresion No Param."),pch=20, col=c("red","black"))
+
+plot(HEIG[mujeres],WEIG[mujeres],main="Altura vs Peso Mujeres",xlab="Altura",ylab="Peso",col="magenta")
+lines(ksmooth(HEIG[mujeres],WEIG[mujeres],kernel="normal",bandwidth=hoptM))
+abline(ModeloLinealM,col="red")
+legend("topleft",legend=c("Regresion Lineal","Regresion No Param."),pch=20, col=c("red","black"))
+
+```
+En ambos casos, los modelos No paramétricos ajustan muy similar a los modelos Lineales. Aun así,en el caso de las mujeres, el modelo No parametrico es más parecido al modelo Lineal que en el caso de los hombres. 
+Se concluye que, para esta muestra, ambos modelos predecirán estimaciones similares, aunque con una mayor (pero muy chica) diferencia en el caso de los hombres.
+
+### Modelo Lineal
+Usando un mecanismo aletorio se dividió la muestra en dos partes: entrenamiento y testeo. En el archivo TrainTest.txt los TRUE’s representan los datos en la muestra de entrenamiento y los FALSE’s los datos en la muestra de testeo. Utilizando los datos de entrenamiento, se ajustó un modelo lineal para WEIG basado en todas las variables explicativas.
+Se evaluó la significación de cada variable analizando el p-valor asociado a las mismas, descartando aquellas con p-valor muy significativo. Además, se descartaron variables muy correlacionadas entre sí para disminuir efectos de multicolinealidad. Este análisis se realizó manualmente a partir de la observación de un heatmap. Se llevó a cabo un nuevo modelo lineal con las variables seleccionadas y se compararon los modelos completo y reducido.
+    
+```{r}
+TrainTest<-read.table("TrainTest.txt")
+body<-cbind(body,TrainTest) 
+MuestraEntrenamiento<-subset(body,TrainTest==1)
+MuestraTesteo<-subset(body,TrainTest==0)
+
+#####Se quitan las columnas usadas para separar ambas muestras.
+MuestraEntrenamiento<-MuestraEntrenamiento[ , !(names(MuestraEntrenamiento) %in% "V1")]
+MuestraTesteo<-MuestraTesteo[ , !(names(MuestraTesteo) %in% "V1")]
+body<-body[ , !(names(body) %in% "V1")]
+#####
+
+ModeloLineal<-lm(WEIG~BIAC+BIIL+BITRO+CHEST1+CHEST2+ELBOW+WRIST+KNEE+ANKLE+SHOUL+CHESTG+WAISTG+NAVEL+HIP+GLUTE+BICEP+FLOREA+KNEEG+CALF+ANKLEG+WRISTG+AGE+HEIG+GEN  ,data=MuestraEntrenamiento)
+summary(ModeloLineal)
+
+#Modelo Ajustado
+ModeloAjustado<-ModeloLineal$coefficients
+
+#Nuevo modelo con las variables seleccionadas por p-valor para compararlos
+ModeloLineal_pvalor<-lm(WEIG~CHEST1+KNEE+SHOUL+CHESTG+WAISTG+HIP+FLOREA+KNEEG+CALF+AGE+HEIG+GEN  ,data=MuestraEntrenamiento)
+summary(ModeloLineal_pvalor)
+
+
+library(corrplot)
+MatrizCorr<-cor(MuestraEntrenamiento)
+corrplot(MatrizCorr,diag=FALSE,col.lim = c(min(MatrizCorr,na.rm = TRUE), max(MatrizCorr,na.rm = TRUE)))
+
+#Error de Prediccion
+Vpredichos<-predict(ModeloLineal,MuestraTesteo)
+ErrorPrediccion<-mean((MuestraTesteo$WEIG-Vpredichos)**2)
+ErrorPrediccion
+```
+El modelo ajustado obtenido es el que tiene como coeficientes al vector ModeloAjustado y como covariables a las variables de MuestraEntrenamiento.
+
+Suponiendo un nivel de significacion para los test individuales del tipo H0: Titai==0 vs H1:Titai!=0 es 0.05,basados en el criterio del p-valor, es decir, si el p-valor de cada test es menor que 0.05 (nivel), el coeficiente es significativamente distinto de 0 y por ende, su correspondiente variable resulta relevante. Para dicho criterio resultan relevantes las variables:
+   CHEST1, KNEE, SHOUL, CHESTG, WAISTG, HIP, GLUTE, FLOREA, KNEEG, CALF, AGE, HEIG, GEN
+   
+Observando el valor del estadistico F, que testea si todos los coeficientes son iguales a cero simultaneamente (como vector), se puede afirmar que no todos los coeficientes son simultaneamente 0, es decir, al menos una de las covariables implicadas es relevante para el modelo. Haciendo el modelo reducido a las variables preseleccionadas bajo el criterio del p-valor, se obtiene un estadistico F con un p-valor igual de chico (muy chico). Por lo que se concluye que es muy poco probable que ninguna de las variables sea significativa. Se condice tambien con los p-valores individuales.
+    
+Se observa que muchas covariables presentan problemas de multicolinealidad ya que sus correlaciones son cercanas a 1. Si se conservan las variables que tienen este problema muy marcado puede generar que la matriz de diseño quede casi singular, lo que produciria predicciones muy inestables. 
+
+
+    
+```{r}
+ModeloLinealReducido<-lm(WEIG~CHEST1+KNEE+CHESTG+WAISTG+HIP+FLOREA+CALF+AGE+HEIG+GEN  ,data=MuestraEntrenamiento)
+summary(ModeloLinealReducido)
+summary(ModeloLineal_pvalor)
+summary(ModeloLineal)
+
+#Error de Prediccion
+VpredichosRed<-predict(ModeloLinealReducido,MuestraTesteo)
+ErrorPrediccion<-mean((MuestraTesteo$WEIG-VpredichosRed)**2)
+ErrorPrediccion
+```
+Para hacer el análisis reducido considerando variables significativas y sin notables problemas de multicolonealidad se seleccionaron las siguientes: CHEST1,KNEE,CHESTG,WAISTG,HIP,FLOREA,CALF,AGE,HEIG,GEN.
+Comparando ambos modelos se enumeran las siguientes conclusiones:
+El R**2 del nuevo modelo(0.9738) es levemente menor al del modelo con todas las variables (0.9764), pero son muy similares y ambos muy cercanos a 1, lo que da pie a pensar que el modelo Reducido explica casi tanta variabilidad como el que tiene todas las variables pero con muchas menos de estas. 
+La varianza del nuevo modelo(2.199^2) es levemente mayor a la del modelo previo (2.124^2).
+En este nuevo modelo todos los coeficientes son significativamente distintos de 0, por lo que todas las variables son relevantes.
+    
+---
+
+Utilizando el comando glmnet se calculó un modelo lineal con todas las variables. Se calculó el estimador regularizado usando la penalización LASSO con la muestra de entrenamiento.
+```{r}
+#(i)
+library(glmnet)
+MatrizDiseño<-model.matrix(ModeloLineal)
+MD<-MatrizDiseño[,-1]
+WEIGentrenamiento<-MuestraEntrenamiento$WEIG
+modeloLASSO<-glmnet(MD,WEIGentrenamiento,alpha=1)
+
+plot(modeloLASSO,xvar="lambda")
+```
+
+El grafico representa la evolucion de los coeficientes en funcion del log(lambda), como se ve, a medida que lambda crece el modelo empieza a "perder" variables. Cuanto más se penaliza menos variables quedan. 
+La tabla que devuelve coef tiene como columnas los coeficientes para cada lambda posible (de mayor a menor) y a medida que decrece lambda van agregando coeficientes en cada modelo, es decir, cuanto menor es la penalizacion más variables incluye el modelo.
+
+A continuación, con el comando cv.glmnet se calculó el lambda óptimo y se utilizó el criterio de 1 desvío paraa elegir el parámetro de regularización. Se comparó el ECM de este modelo con el modelo lineal completo.
+
+```{r}
+
+modeloLASSOcv<-cv.glmnet(MD,WEIGentrenamiento,alpha=1)
+print(modeloLASSOcv)
+LambdaMinError<-modeloLASSOcv$lambda.min
+LambdaMinError
+Lambda1desvio<-modeloLASSOcv$lambda.1se
+Lambda1desvio
+#Modelo ajustado para el lambda de 1 desvio:
+modeloLASSOcvAjustado<-coef(modeloLASSOcv)
+
+muestratesteo <- MuestraTesteo[ , !(names(MuestraTesteo) %in% "WEIG")]
+mat_muestratesteo <- as.matrix(muestratesteo)
+#Eliminación de  la columna WEIG,para conservar solamente las variables que sirven para predecir.
+col_weig_muestratesteo <- MuestraTesteo[,"WEIG"]
+#Extracción de la columna de respuestas (WEIG) para calcular el ecm luego
+
+prediccion_lasso<-predict(modeloLASSOcv,mat_muestratesteo,s="lambda.1se")
+
+ecm <- assess.glmnet(modeloLASSOcv,newx=mat_muestratesteo,newy=col_weig_muestratesteo)
+ecm$mse
+
+```
+
+El lambda optimo segun la convalidacion cruzada de este modelo es LambdaMinError=0.0286, es el que minimiza la expresion del error del modelo.
+Segun el criterio de 1 Desvio, el parametro de regularizacion debe ser Lambda1desvio=0.4251
+
+Este modelo, en lugar de utilizar todas las variables, hace una seleccion en base al parametro de regularizacion, quedandose con: CHEST1, CHEST2, KNEE, SHOUL, CHESTG, WAISTG, HIP, GLUTE, BICEP, FLOREA, KNEEG, CALF, HEIG. En su mayoria, salvo por CHEST2 y BICEP, las variables coinciden con las que se han considerado relevantes anteriormente por el criterio del p-valor. Para elegir estas variables, ante variables muy correlacionadas entre si, el modelo tiende a descartar alguna de ellas. Se puede considerar que este es el motivo por el cual descarta la mayoria de las variables, ya que, como se ha visto en el modelo completo, muchas variables tenian problemas de multicolinealidad.
+
+El error de prediccion para este modelo es 4.283189, en el modelo completo se obtiene un error de prediccion de 4.225356. A pesar de tener menos variables (LASSO), los errores que se cometen son bastante similares, siendo menor el error cometido usando todas las variables.
+
+Para terminar, se concluye que, a pesar de que el modelo lineal con todas las variables tiene un error de prediccion levemente menor, el modelo LASSO a partir del lambda de 1 desvio utiliza muchas menos variables, lo cual es una ventaja si se tiene una muestra con muchas variables muy correlacionadas (como era este el caso).
+En modelo reducido que se planteó seleccionando las variables con algun criterio propio, además de ser muy trabajoso para hacerse manualmente, el error de prediccion obtenido (4.666304) resultó bastante mayor que los otros dos modelos. Por lo que se afirmaW que LASSO se convierte en una herramienta muy util para distingir las variables muy correlacionadas.
+
